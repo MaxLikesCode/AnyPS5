@@ -28,6 +28,15 @@ constexpr int SYSTEM_SERVICE_PARAM_ID_ENTER_BUTTON_ASSIGN = 1000;
 
 constexpr std::size_t SYSTEM_SERVICE_MAX_SYSTEM_NAME_LENGTH = 65;
 
+struct SystemServicePlayerDialogParam {
+    std::size_t size;
+    std::int32_t mode;
+    std::int32_t user_id;
+    std::uint64_t target_account_id;
+    std::uint8_t reserved[40];
+};
+static_assert(sizeof(SystemServicePlayerDialogParam) == 64);
+
 constexpr int SYSTEM_SERVICE_PARAM_LANG_JAPANESE = 0;
 constexpr int SYSTEM_SERVICE_PARAM_LANG_ENGLISH_US = 1;
 constexpr int SYSTEM_SERVICE_PARAM_LANG_ARABIC = 21;

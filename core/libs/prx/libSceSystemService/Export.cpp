@@ -26,6 +26,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
+#include "prx/libSceUserService/UserService.hpp"
 #include "prx/libSceAgcDriver/Execution/include/HostHdr.hpp"
 
 namespace {
@@ -347,8 +348,11 @@ int APS5_VABI sceSystemServiceSetNoticeScreenSkipFlag(void) {
  return SYSTEM_SERVICE_OK;
 }
 
-int APS5_VABI sceSystemServiceInitializePlayerDialogParam(void* param) {
+int APS5_VABI sceSystemServiceInitializePlayerDialogParam(SystemServicePlayerDialogParam* param) {
  if (param == nullptr) return SYSTEM_SERVICE_ERROR_PARAMETER;
+ *param = {};
+ param->size = sizeof(*param);
+ param->user_id = USER_SERVICE_USER_ID_INVALID;
  return SYSTEM_SERVICE_OK;
 }
 
