@@ -1,4 +1,5 @@
 #include "prx/libc/include/General.hpp"
+#include "prx/libkernel/KernelErrors.hpp"
 #include <condition_variable>
 #include <cstdint>
 #include <mutex>
@@ -18,6 +19,11 @@ struct PthreadBarrierPrivate {
 namespace {
 
 constexpr int PROCESS_PRIVATE = 0;
+constexpr int BARRIER_SERIAL_THREAD = -1;
+
+int SceResult(int result) {
+    return result == 0 ? 0 : SceKernelError(result);
+}
 
 }
 
@@ -100,6 +106,36 @@ int APS5_VABI pthread_barrier_destroy_nid_postfix(PthreadBarrierPrivate** barrie
     delete value;
     *barrier = nullptr;
     return 0;
+}
+
+int APS5_VABI scePthreadBarrierattrInit(PthreadBarrierattrPrivate** attr) {
+    return SceResult(pthread_barrierattr_init_nid_postfix(attr));
+}
+
+int APS5_VABI scePthreadBarrierattrDestroy(PthreadBarrierattrPrivate** attr) {
+    return SceResult(pthread_barrierattr_destroy_nid_postfix(attr));
+}
+
+int APS5_VABI scePthreadBarrierattrGetpshared(PthreadBarrierattrPrivate* const* attr, int* pshared) {
+    return SceResult(pthread_barrierattr_getpshared_nid_postfix(attr, pshared));
+}
+
+int APS5_VABI scePthreadBarrierattrSetpshared(PthreadBarrierattrPrivate** attr, int pshared) {
+    return SceResult(pthread_barrierattr_setpshared_nid_postfix(attr, pshared));
+}
+
+int APS5_VABI scePthreadBarrierInit(PthreadBarrierPrivate** barrier, PthreadBarrierattrPrivate* const* attr, unsigned count, const char* name) {
+    (void)name;
+    return SceResult(pthread_barrier_init_nid_postfix(barrier, attr, count));
+}
+
+int APS5_VABI scePthreadBarrierWait(PthreadBarrierPrivate** barrier) {
+    const int result = pthread_barrier_wait_nid_postfix(barrier);
+    return result == BARRIER_SERIAL_THREAD ? result : SceResult(result);
+}
+
+int APS5_VABI scePthreadBarrierDestroy(PthreadBarrierPrivate** barrier) {
+    return SceResult(pthread_barrier_destroy_nid_postfix(barrier));
 }
 
 }
