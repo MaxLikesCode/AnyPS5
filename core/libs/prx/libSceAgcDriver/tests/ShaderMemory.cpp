@@ -4739,7 +4739,7 @@ void verifyPixelRequestSerialization() {
     minimal.context.pixel->layerExported = true;
     minimal.context.pixel->ditheredAlphaToCoverage = true;
     const auto encoded = serializer.Serialize(minimal);
-    require(requestPrefix(encoded, 8u) == "NVNQQSQAAAA=", "new requests did not use serialization version 36");
+    require(requestPrefix(encoded, 8u) == "NVNQQSUAAAA=", "new requests did not use serialization version 37");
     const std::array<std::uint32_t, 2> fallbacks{0x40u, 0x1ac4u};
     auto withFallbacks = minimal;
     withFallbacks.context.linkedCallFallbacks = fallbacks;
@@ -4857,7 +4857,7 @@ void verifyPixelRequestSerialization() {
     for (std::size_t bytes = 0; bytes < 45u; ++bytes) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(requestPrefix(encoded, mappingOffset + bytes))); }, "truncated data", "a truncated pixel mapping, packing, dual-source, alpha-to-coverage, stencil reference export flag, primitive class, layer export, dither or front-face flag, quad pixel mask or quad sample mask was accepted");
     }
-    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQSUAAAA="}) {
+    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQSYAAAA="}) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(unsupported)); }, "serialization version", "an unsupported request version was accepted");
     }
     static constexpr std::string_view version18Request{
@@ -5008,6 +5008,7 @@ void verifyVertexInfoVersion19() {
     const auto sampledBytes = decodeBase64(serializer.Serialize(sampledPixel));
     require(std::equal(maskedBytes.begin(), maskedBytes.begin() + static_cast<std::ptrdiff_t>(maskOffset + 1u), sampledBytes.begin()) && sampledBytes[maskOffset + 1u] == 0x1u && sampledBytes[maskOffset + 5u] == 0x2u && sampledBytes[maskOffset + 9u] == 0x4u && sampledBytes[maskOffset + 13u] == 0x8u, "the quad sample masks are not the four words after the quad pixel mask");
     auto version30 = sampledBytes;
+    version30.resize(version30.size() - sizeof(std::uint64_t));
     version30.pop_back();
     version30.pop_back();
     version30.pop_back();
@@ -5018,6 +5019,7 @@ void verifyVertexInfoVersion19() {
     auto spanned = sampledPixel;
     spanned.target.spannedWaves = true;
     auto version32 = decodeBase64(serializer.Serialize(spanned));
+    version32.resize(version32.size() - sizeof(std::uint64_t));
     require(version32.size() > 2u && version32.back() == 0u && version32[version32.size() - 2u] == 0u && version32[version32.size() - 3u] == 1u, "the spanned-waves flag is not the byte before the depth remap flag");
     version32.pop_back();
     version32.pop_back();
@@ -5026,6 +5028,7 @@ void verifyVertexInfoVersion19() {
     const auto replay32 = serializer.Deserialize(encodeBase64(version32));
     require(replay32.request.context.pixel.has_value() && !replay32.request.context.pixel->iteratesSamples && replay32.request.context.pixel->sampleLocations == std::array<std::uint8_t, 32>{} && replay32.request.target.spannedWaves && serializer.Serialize(replay32.request) == serializer.Serialize(spanned), "a version 32 request read pixel iteration or sample locations, or lost its spanned-waves flag");
     auto version29 = sampledBytes;
+    version29.resize(version29.size() - sizeof(std::uint64_t));
     version29.pop_back();
     version29.pop_back();
     version29.pop_back();
@@ -5034,6 +5037,7 @@ void verifyVertexInfoVersion19() {
     const auto replay29 = serializer.Deserialize(encodeBase64(version29));
     require(replay29.request.context.pixel.has_value() && replay29.request.context.pixel->quadSampleMask == std::array<std::uint16_t, 4>{0x1u, 0x2u, 0x4u, 0x8u} && replay29.request.context.pixel->reversedBlend == 0u && decodeBase64(serializer.Serialize(replay29.request)) == sampledBytes, "a version 29 request read a reversed-order blend code or misread the fields after the quad sample masks");
     auto version28 = sampledBytes;
+    version28.resize(version28.size() - sizeof(std::uint64_t));
     version28.pop_back();
     version28.pop_back();
     version28.pop_back();
@@ -5042,6 +5046,7 @@ void verifyVertexInfoVersion19() {
     const auto replay28 = serializer.Deserialize(encodeBase64(version28));
     require(replay28.request.context.pixel.has_value() && replay28.request.context.pixel->quadPixelMask == 0x2u && replay28.request.context.pixel->quadSampleMask == std::array<std::uint16_t, 4>{0xffffu, 0xffffu, 0xffffu, 0xffffu} && replay28.request.context.pixel->reversedBlend == 0u && decodeBase64(serializer.Serialize(replay28.request)) == maskedBytes, "a version 28 request read quad sample masks or a reversed-order blend code, or misread the fields after them");
     auto version27 = maskedBytes;
+    version27.resize(version27.size() - sizeof(std::uint64_t));
     version27.pop_back();
     version27.pop_back();
     version27.pop_back();
@@ -5050,6 +5055,7 @@ void verifyVertexInfoVersion19() {
     const auto replay27 = serializer.Deserialize(encodeBase64(version27));
     require(replay27.request.context.pixel.has_value() && replay27.request.context.pixel->quadPixelMask == 0xfu && replay27.request.context.pixel->reversedBlend == 0u && serializer.Serialize(replay27.request) == encodedPixel, "a version 27 request read a quad pixel mask or reversed-order blend code, or misread the fields after it");
     auto legacyPixel = plainPixel;
+    legacyPixel.resize(legacyPixel.size() - sizeof(std::uint64_t));
     legacyPixel.pop_back();
     legacyPixel.pop_back();
     legacyPixel.pop_back();
@@ -5102,22 +5108,22 @@ void verifyDepthRemapRequests() {
     require(serializer.Serialize(replay.request) == remapped, "a version 35 depth remap request changed on re-serialization");
     const auto plainBytes = decodeBase64(plain);
     const auto remappedBytes = decodeBase64(remapped);
-    require(plainBytes.size() == remappedBytes.size() && plainBytes.size() > 5u && std::equal(plainBytes.begin(), plainBytes.end() - 6, remappedBytes.begin()), "the depth remap flag and mode are not the last 6 bytes before the f32 flush flag of a vertex request");
+    require(plainBytes.size() == remappedBytes.size() && plainBytes.size() > 5u && std::equal(plainBytes.begin(), plainBytes.end() - 6 - sizeof(std::uint64_t), remappedBytes.begin()), "the depth remap flag and mode are not the 6 bytes before the f32 flush flag and the resident invocation count of a vertex request");
     for (const std::uint8_t legacyVersion : {32u, 34u}) {
         auto legacyBytes = remappedBytes;
         legacyBytes[4] = legacyVersion;
-        legacyBytes.resize(legacyBytes.size() - 6u);
+        legacyBytes.resize(legacyBytes.size() - 6u - sizeof(std::uint64_t));
         const auto legacy = serializer.Deserialize(encodeBase64(legacyBytes));
         require(!legacy.request.target.depthRangeRemap && legacy.request.context.vertex.has_value() && legacy.request.context.vertex->depthRemapMode == 0u, ("a version " + std::to_string(legacyVersion) + " vertex request read depth remap fields").c_str());
         require(serializer.Serialize(legacy.request) == plain, ("a version " + std::to_string(legacyVersion) + " vertex request misread the fields before the depth remap").c_str());
     }
     auto version35 = remappedBytes;
     version35[4] = 35u;
-    version35.pop_back();
+    version35.resize(version35.size() - 1u - sizeof(std::uint64_t));
     const auto replay35 = serializer.Deserialize(encodeBase64(version35));
     require(replay35.request.target.depthRangeRemap && replay35.request.context.vertex->depthRemapMode == 2u && !replay35.request.target.float32FlushToZero && serializer.Serialize(replay35.request) == remapped, "a version 35 request misread the depth remap fields or read an f32 flush flag");
     auto truncated = remappedBytes;
-    truncated.resize(truncated.size() - 2u);
+    truncated.resize(truncated.size() - 2u - sizeof(std::uint64_t));
     expectFailure([&] { static_cast<void>(serializer.Deserialize(encodeBase64(truncated))); }, "truncated data", "a truncated depth remap mode was accepted");
     auto trailing = remappedBytes;
     trailing.push_back(0u);
@@ -6482,7 +6488,7 @@ void verifyBdaAnchors() {
 
 void verifyFunctionLdsBound() {
     using namespace ShaderRecompiler;
-    const auto build = [](const auto& body) {
+    const auto build = [](const auto& body, std::uint32_t limit = FunctionLdsDwordLimit) {
         IrProgram program;
         program.Resources().stage = IrShaderStage::Pixel;
         for (const std::uint32_t offset : {0u, 256u, 512u, 0xfffffff0u}) {
@@ -6513,15 +6519,16 @@ void verifyFunctionLdsBound() {
         auto& active = program.CreateValue(IrOpcode::Void, IrType::U1);
         active.SetImmediateBool(true);
         body(program, block, emit, constant, active);
-        return std::pair{FunctionLdsDwords(program), AnalyzeProgramRequirements(program)};
+        return std::pair{FunctionLdsDwords(program, limit), AnalyzeProgramRequirements(program, limit)};
     };
 
-    const auto [laneSlots, laneRequirements] = build([](IrProgram&, IrBlock&, auto& emit, auto& constant, IrValue& active) {
+    const auto laneSlotsBody = [](IrProgram&, IrBlock&, auto& emit, auto& constant, IrValue& active) {
         auto& lane = emit(IrOpcode::LaneId, IrType::U32, {});
         auto& address = emit(IrOpcode::ShiftLeftLogical32, IrType::U32, {&lane, &constant(2u)});
         for (const std::uint32_t memory : {0u, 1u, 2u}) emit(IrOpcode::WriteSharedU32, IrType::Void, {&address, &lane, &active}, memory);
         emit(IrOpcode::LoadSharedU32, IrType::U32, {&address, &active}, 2u);
-    });
+    };
+    const auto [laneSlots, laneRequirements] = build(laneSlotsBody);
     require(laneSlots == 192u, "function LDS: lane-strided slots up to byte 767 must take 192 dwords");
     require(laneRequirements.functionLds && laneRequirements.functionLdsDwords == 192u, "function LDS: the requirements do not carry the bounded size");
     {
@@ -6584,11 +6591,23 @@ void verifyFunctionLdsBound() {
     require(wideRequirements.functionLdsDwords == 128u, "function LDS: the requirements do not carry the wide access's size");
     require(wideRequirements.functionLdsAddresses.empty(), "function LDS: a selected address must keep the lane term");
 
-    const auto [unbounded, unboundedRequirements] = build([](IrProgram&, IrBlock&, auto& emit, auto& constant, IrValue& active) {
+    const auto unboundedBody = [](IrProgram&, IrBlock&, auto& emit, auto& constant, IrValue& active) {
         auto& user = emit(IrOpcode::GetUserData, IrType::U32, {&constant(0u)});
         emit(IrOpcode::WriteSharedU32, IrType::Void, {&user, &user, &active}, 0u);
-    });
+    };
+    const auto [unbounded, unboundedRequirements] = build(unboundedBody);
     require(unbounded == FunctionLdsDwordLimit && unboundedRequirements.functionLdsDwords == FunctionLdsDwordLimit, "function LDS: an address without a bound must keep the full array");
+
+    require(FunctionLdsDwordLimitFor(0u) == FunctionLdsDwordLimit, "function LDS: a device without a resident invocation count must keep the full array");
+    require(FunctionLdsDwordLimitFor(65536u) == FunctionLdsDwordLimit, "function LDS: 65536 resident invocations must keep the full array");
+    require(FunctionLdsDwordLimitFor(196608u) == 4416u, "function LDS: 196608 resident invocations must cap the array at 4416 dwords");
+    require(FunctionLdsDwordLimitFor(261120u) == 3072u, "function LDS: 261120 resident invocations must cap the array at 3072 dwords");
+    require(FunctionLdsDwordLimitFor(std::uint64_t{1} << 32u) == 64u, "function LDS: the cap must not fall below 64 dwords");
+    const auto capped = FunctionLdsDwordLimitFor(196608u);
+    const auto [cappedUnbounded, cappedUnboundedRequirements] = build(unboundedBody, capped);
+    require(cappedUnbounded == capped && cappedUnboundedRequirements.functionLdsDwords == capped, "function LDS: an address without a bound must take the device's capped array");
+    const auto [cappedLaneSlots, cappedLaneRequirements] = build(laneSlotsBody, capped);
+    require(cappedLaneSlots == 192u && cappedLaneRequirements.functionLdsDwords == 192u && cappedLaneRequirements.functionLdsAddresses.size() == 4u, "function LDS: a bounded array below the device's cap must keep its size and slots");
 
     const auto [counter, counterRequirements] = build([](IrProgram&, IrBlock&, auto& emit, auto& constant, IrValue& active) {
         auto& m0 = emit(IrOpcode::GetUserData, IrType::U32, {&constant(0u)});
@@ -6625,6 +6644,53 @@ void verifyFunctionLdsBound() {
         emit(IrOpcode::LoadShared, IrType::U32, {&constant(0u), &active}, 0u);
     }).first;
     require(unsized == FunctionLdsDwordLimit, "function LDS: an access without a known width must keep the full array");
+}
+
+void verifyFunctionLdsDeviceCap() {
+    using namespace ShaderRecompiler;
+    static constexpr std::array<std::uint32_t, 5> capabilities{spv::CapabilityShader, spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle, spv::CapabilityClipDistance};
+    static constexpr std::array<std::uint32_t, 8> code{0x7e020f01u, 0xd8340000u, 0x00000101u, 0xbf8cc07fu, 0x7e0e02f2u, 0xf800180fu, 0x07070707u, 0xbf810000u};
+    const auto functionArrayDwords = [](std::uint64_t residentInvocations) {
+        RecompileRequest request{};
+        request.shader = {ShaderStage::Fragment, 0x40000u, code, 0, {}};
+        request.context.waveSize = 32u;
+        ShaderPixelStageInfo info{};
+        info.wave32 = true;
+        info.inputAddr = PixelInputBit(PixelInput::PositionX) | PixelInputBit(PixelInput::PositionY);
+        info.posX = true;
+        info.posY = true;
+        info.targetOutputMode[0] = 9u;
+        info.targetExportMapping.fill(0xe4u);
+        request.context.pixel = info;
+        request.target.vulkanVersion = 0x00401000u;
+        request.target.spirvVersion = 0x00010300u;
+        request.target.subgroupSize = 32u;
+        request.target.supportedCapabilities = capabilities;
+        request.target.maxResidentInvocations = residentInvocations;
+        request.layout.pushConstantSizeBytes = 128;
+        request.useCache = false;
+        const auto result = Recompile(request);
+        const auto words = result.spirv.Words();
+        std::map<std::uint32_t, std::uint32_t> constants;
+        std::map<std::uint32_t, std::uint32_t> arrays;
+        std::map<std::uint32_t, std::uint32_t> pointees;
+        std::uint32_t largest = 0;
+        for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
+            const auto op = static_cast<spv::Op>(words[at] & 0xffffu);
+            if (op == spv::OpConstant && (words[at] >> 16u) == 4u) constants[words[at + 2]] = words[at + 3];
+            if (op == spv::OpTypeArray) arrays[words[at + 1]] = words[at + 3];
+            if (op == spv::OpTypePointer && words[at + 2] == spv::StorageClassFunction) pointees[words[at + 1]] = words[at + 3];
+            if (op != spv::OpVariable || words[at + 3] != spv::StorageClassFunction) continue;
+            const auto pointee = pointees.find(words[at + 1]);
+            if (pointee == pointees.end()) continue;
+            const auto array = arrays.find(pointee->second);
+            if (array == arrays.end() || constants.count(array->second) == 0) continue;
+            largest = std::max(largest, constants.at(array->second));
+        }
+        return largest;
+    };
+    require(functionArrayDwords(0u) == FunctionLdsDwordLimit, "function LDS: a pixel LDS address without a bound must declare the full array when the device reports no resident invocations");
+    require(functionArrayDwords(196608u) == FunctionLdsDwordLimitFor(196608u), "function LDS: a pixel LDS address without a bound must declare the array capped by the device's resident invocations");
 }
 
 void verifyFunctionLdsUpdates() {
@@ -7316,6 +7382,7 @@ int main(int argc, char** argv) {
         verifyBdaReadFallbackFunctions();
         verifyBdaAnchors();
         verifyFunctionLdsBound();
+        verifyFunctionLdsDeviceCap();
         verifyFunctionLdsUpdates();
         verifySrtReadPatching();
         verifyGuardedNullPointers();
@@ -7449,6 +7516,12 @@ int main(int argc, char** argv) {
         std::vector<std::uint64_t> float32FlushKey;
         RecompileCacheKey::Build(float32Flush, float32FlushKey);
         require(plainKey != float32FlushKey, "f32 hardware flush did not change the cache key");
+        auto residentInvocations = uncached;
+        residentInvocations.target.maxResidentInvocations = 196608u;
+        require(RequestSerializer{}.Deserialize(RequestSerializer{}.Serialize(residentInvocations)).request.target.maxResidentInvocations == 196608u, "the resident invocation count was lost in serialization");
+        std::vector<std::uint64_t> residentInvocationsKey;
+        RecompileCacheKey::Build(residentInvocations, residentInvocationsKey);
+        require(plainKey != residentInvocationsKey, "the resident invocation count did not change the cache key");
         auto changedLayout = request;
         changedLayout.layout.pushConstantSizeBytes = 64;
         require(!Recompile(changedLayout).cacheHit, "binding layout change reused an incompatible variant");

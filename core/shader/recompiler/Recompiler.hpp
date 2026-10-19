@@ -289,6 +289,7 @@ struct SpirvTarget {
     bool robustBufferAccess2 = false;
     bool depthRangeRemap = false;
     bool float32FlushToZero = false;
+    std::uint64_t maxResidentInvocations = 0;
 };
 
 struct BindingLayout {

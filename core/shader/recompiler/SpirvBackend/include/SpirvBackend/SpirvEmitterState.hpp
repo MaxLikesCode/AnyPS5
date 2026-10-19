@@ -89,7 +89,7 @@ struct SpirvTableAccess {
 struct SpirvEmitterState {
     const ImageResource* runtimeImage = nullptr;
     SpirvTableAccess tableAccess;
-    SpirvEmitterState(const IrProgram& program, const ShaderStageInputInfo& inputInfo);
+    SpirvEmitterState(const IrProgram& program, const ShaderStageInputInfo& inputInfo, std::uint32_t functionLdsDwordLimit = FunctionLdsDwordLimit);
 
     SpirvModule module;
     const IrProgram& program;

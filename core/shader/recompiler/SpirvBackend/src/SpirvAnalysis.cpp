@@ -245,7 +245,16 @@ std::uint32_t SharedAccessDwords(IrOpcode opcode) {
 
 }
 
-std::uint32_t FunctionLdsDwords(const IrProgram& program) {
+std::uint32_t FunctionLdsDwordLimitFor(std::uint64_t residentInvocations) {
+    if (residentInvocations == 0u) return FunctionLdsDwordLimit;
+    constexpr std::uint64_t budgetBytes = std::uint64_t{1} << 32u;
+    constexpr std::uint64_t reservedBytes = 4096u;
+    const auto bytes = budgetBytes / residentInvocations;
+    const auto dwords = bytes > reservedBytes ? ((bytes - reservedBytes) / 4u) & ~std::uint64_t{63} : 0u;
+    return static_cast<std::uint32_t>(std::clamp<std::uint64_t>(dwords, 64u, FunctionLdsDwordLimit));
+}
+
+std::uint32_t FunctionLdsDwords(const IrProgram& program, std::uint32_t limit) {
     AddressBound bound;
     std::uint64_t needed = 0;
     for (const IrBlock* block : program.BlockOrder()) {
@@ -253,23 +262,23 @@ std::uint32_t FunctionLdsDwords(const IrProgram& program) {
             const auto access = SharedAccessOf(inst->Opcode());
             if (access == SharedAccess::None) continue;
             const auto index = inst->Flags<MemoryFlags>().index;
-            if (index >= program.Resources().memoryInfo.size()) return FunctionLdsDwordLimit;
+            if (index >= program.Resources().memoryInfo.size()) return limit;
             const auto& memory = program.Resources().memoryInfo[index];
             if (memory.kind != ResourceKind::Lds) continue;
             if (access == SharedAccess::Append || access == SharedAccess::Consume) {
                 needed = std::max<std::uint64_t>(needed, (std::uint64_t{memory.offset} >> 2u) + 1u);
-                if (needed >= FunctionLdsDwordLimit) return FunctionLdsDwordLimit;
+                if (needed >= limit) return limit;
                 continue;
             }
             const auto dwords = SharedAccessDwords(inst->Opcode());
-            if (dwords == 0u || inst->ArgumentCount() == 0) return FunctionLdsDwordLimit;
+            if (dwords == 0u || inst->ArgumentCount() == 0) return limit;
             const auto address = bound.Of(inst->Argument(0));
-            if (!address || *address + memory.offset > 0xffffffffull) return FunctionLdsDwordLimit;
+            if (!address || *address + memory.offset > 0xffffffffull) return limit;
             needed = std::max(needed, ((*address + memory.offset) >> 2u) + dwords);
-            if (needed >= FunctionLdsDwordLimit) return FunctionLdsDwordLimit;
+            if (needed >= limit) return limit;
         }
     }
-    return static_cast<std::uint32_t>(std::min<std::uint64_t>(std::max<std::uint64_t>((needed + 63u) & ~63ull, 64u), FunctionLdsDwordLimit));
+    return static_cast<std::uint32_t>(std::min<std::uint64_t>(std::max<std::uint64_t>((needed + 63u) & ~63ull, 64u), limit));
 }
 
 namespace {
@@ -313,9 +322,9 @@ std::optional<LaneAffine> LaneAffineOf(const IrValue* value, std::uint32_t depth
 
 }
 
-std::unordered_map<const IrValue*, std::uint32_t> FunctionLdsLaneAddresses(const IrProgram& program) {
+std::unordered_map<const IrValue*, std::uint32_t> FunctionLdsLaneAddresses(const IrProgram& program, std::uint32_t limit) {
     std::unordered_map<const IrValue*, std::uint32_t> addresses;
-    if (FunctionLdsDwords(program) >= FunctionLdsDwordLimit) return {};
+    if (FunctionLdsDwords(program, limit) >= limit) return {};
     std::optional<std::uint64_t> stride;
     for (const IrBlock* block : program.BlockOrder()) {
         for (const IrValue* inst : block->Instructions()) {
@@ -333,7 +342,7 @@ std::unordered_map<const IrValue*, std::uint32_t> FunctionLdsLaneAddresses(const
     return addresses;
 }
 
-SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program) {
+SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program, std::uint32_t functionLdsDwordLimit) {
     SpirvRequirements requirements {};
     for (const IrBlock* block : program.BlockOrder()) {
         for (const IrValue* inst : block->Instructions()) {
@@ -467,8 +476,8 @@ SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program) {
         }
     }
     if (requirements.functionLds) {
-        requirements.functionLdsDwords = FunctionLdsDwords(program);
-        requirements.functionLdsAddresses = FunctionLdsLaneAddresses(program);
+        requirements.functionLdsDwords = FunctionLdsDwords(program, functionLdsDwordLimit);
+        requirements.functionLdsAddresses = FunctionLdsLaneAddresses(program, functionLdsDwordLimit);
         if (!requirements.functionLdsAddresses.empty()) {
             std::uint64_t needed = 0;
             for (const auto& [inst, address] : requirements.functionLdsAddresses) {
