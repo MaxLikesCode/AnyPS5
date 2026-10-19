@@ -9,6 +9,19 @@
 static std::atomic<bool> initialized{false};
 static std::atomic<bool> loginReported{false};
 
+static bool IsValidThreadPriority(int32_t thread_priority) {
+ const auto priority = static_cast<uint32_t>(thread_priority);
+ return priority >= USER_SERVICE_MIN_THREAD_PRIORITY && priority <= USER_SERVICE_MAX_THREAD_PRIORITY;
+}
+
+static int InitializeService() {
+ if (initialized.exchange(true)) {
+  return USER_SERVICE_ERROR_ALREADY_INITIALIZED;
+ }
+ loginReported.store(false);
+ return USER_SERVICE_OK;
+}
+
 static int ReportAccessibilitySetting(int user_id, int32_t* setting, int32_t value) {
  if (user_id != USER_SERVICE_INITIAL_USER_ID) {
   return USER_SERVICE_ERROR_NOT_LOGGED_IN;
@@ -148,20 +161,18 @@ int APS5_VABI sceUserServiceGetUserNumber(int user_id, int32_t* number) {
  return USER_SERVICE_OK;
 }
 
-int APS5_VABI sceUserServiceInitialize(const void* params) {
- (void)params;
- if (initialized.exchange(true)) {
-  return USER_SERVICE_ERROR_ALREADY_INITIALIZED;
+int APS5_VABI sceUserServiceInitialize(const UserServiceInitializeParams* params) {
+ if (params != nullptr && !IsValidThreadPriority(params->priority)) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
- loginReported.store(false);
- return USER_SERVICE_OK;
+ return InitializeService();
 }
 
-int APS5_VABI sceUserServiceInitialize2(void) {
- if (!initialized.exchange(true)) {
-  loginReported.store(false);
+int APS5_VABI sceUserServiceInitialize2(int32_t thread_priority) {
+ if (!IsValidThreadPriority(thread_priority)) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
- return USER_SERVICE_OK;
+ return InitializeService();
 }
 
 int APS5_VABI sceUserServiceTerminate(void) {
