@@ -223,16 +223,15 @@ int APS5_VABI sceHttpUriUnescape(char* out, size_t* require, size_t prepare, con
     const std::string_view input(in);
     std::string decoded;
     for (size_t i = 0; i < input.size(); ++i) {
-        if (input[i] == '%' && input.size() - i >= 3) {
-            unsigned int value = 0;
-            const auto result = std::from_chars(input.data() + i + 1, input.data() + i + 3, value, 16);
-            if (result.ec == std::errc{} && result.ptr == input.data() + i + 3) {
-                decoded.push_back(static_cast<char>(value));
-                i += 2;
-                continue;
-            }
+        if (input[i] != '%') {
+            decoded.push_back(input[i]);
+            continue;
         }
-        decoded.push_back(input[i]);
+        if (input.size() - i < 3 || !std::isxdigit(static_cast<unsigned char>(input[i + 1])) || !std::isxdigit(static_cast<unsigned char>(input[i + 2]))) return ERROR_INVALID_URL;
+        unsigned int value = 0;
+        std::from_chars(input.data() + i + 1, input.data() + i + 3, value, 16);
+        decoded.push_back(static_cast<char>(value));
+        i += 2;
     }
     return copyOut(decoded, out, require, prepare);
 }

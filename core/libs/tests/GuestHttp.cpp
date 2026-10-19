@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 #include <string>
 #include <thread>
 
@@ -170,8 +171,7 @@ int main() {
 
     constexpr const char* unescapeCases[][2] = {
         {"", ""}, {"plain+text", "plain+text"}, {"a%20b%2F~%c3%a9", "a b/~\xC3\xA9"},
-        {"%41%4a%4F%ff", "AJO\xFF"}, {"%2520", "%20"},
-        {"%", "%"}, {"%1", "%1"}, {"%1g%gg%+1%-1", "%1g%gg%+1%-1"}
+        {"%41%4a%4F%ff", "AJO\xFF"}, {"%2520", "%20"}
     };
     for (const auto& row : unescapeCases) {
         const std::size_t size = std::strlen(row[1]) + 1;
@@ -181,6 +181,14 @@ int main() {
         for (char c : escaped) Require(c == 'Z');
         Require(sceHttpUriUnescape(escaped, nullptr, size, row[0]) == 0);
         Require(Equal(escaped, row[1]) && escaped[size] == 'Z');
+    }
+    for (const char* malformed : {"%", "%1", "abc%2", "a%zzb", "%1g", "%gg", "%+1", "%-1", "ok%41%4"}) {
+        required = 123;
+        std::memset(escaped, 'Z', sizeof(escaped));
+        Require(sceHttpUriUnescape(escaped, &required, sizeof(escaped), malformed) == invalidUrl);
+        Require(required == 123);
+        for (char c : escaped) Require(c == 'Z');
+        Require(sceHttpUriUnescape(nullptr, &required, 0, malformed) == invalidUrl && required == 123);
     }
     Require(sceHttpUriUnescape(escaped, &required, sizeof(escaped), "a%00b") == 0);
     Require(required == 4 && std::memcmp(escaped, "a\0b", 4) == 0);
