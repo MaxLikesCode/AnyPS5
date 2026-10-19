@@ -12,6 +12,8 @@
 
 extern "C" std::uint32_t* APS5_VABI sceAgcDcbEventWrite(CommandBuffer* buf, std::uint8_t eventType, const volatile void* address);
 extern "C" std::uint64_t APS5_VABI sceAgcDcbEventWriteGetSize(std::uint8_t eventType);
+extern "C" std::uint32_t APS5_VABI sceAgcDcbBeginOcclusionQueryGetSize(std::uint32_t clear);
+extern "C" std::uint32_t APS5_VABI sceAgcDcbEndOcclusionQueryGetSize();
 extern "C" std::uint32_t* APS5_VABI sceAgcDcbResetQueue(CommandBuffer* buf, std::uint32_t op, std::uint32_t state);
 extern "C" std::uint32_t* APS5_VABI sceAgcDcbClearState(CommandBuffer* buf, std::uint32_t command);
 extern "C" std::uint32_t* APS5_VABI sceAgcDcbSetFlip(CommandBuffer* buf, std::uint32_t handle, std::int32_t index, std::uint32_t mode, std::int64_t argument);
@@ -753,6 +755,14 @@ void testEventWrite() {
     check(cacheFlushWithAddress.words[0] == 0xc0004600u && cacheFlushWithAddress.words[1] == 0x16u, "incorrect event 0x16 with address packet");
 }
 
+void testOcclusionQuerySize() {
+    check(sceAgcDcbBeginOcclusionQueryGetSize(0) == 16, "incorrect occlusion query begin size");
+    check(sceAgcDcbBeginOcclusionQueryGetSize(1) == 288, "incorrect clearing occlusion query begin size");
+    check(sceAgcDcbEndOcclusionQueryGetSize() == 16, "incorrect occlusion query end size");
+    expectFailure([] { sceAgcDcbBeginOcclusionQueryGetSize(2); });
+    expectFailure([] { sceAgcDcbBeginOcclusionQueryGetSize(0x100); });
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -766,6 +776,7 @@ int main(int argc, char** argv) {
         }
         testPackets();
         testEventWrite();
+        testOcclusionQuerySize();
         testNop();
         testClearState();
         testIndexedIndirectDraws();
