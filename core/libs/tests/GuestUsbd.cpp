@@ -23,6 +23,7 @@ constexpr std::int32_t noDevice = static_cast<std::int32_t>(0x80240004);
 constexpr std::int32_t notFound = static_cast<std::int32_t>(0x80240005);
 constexpr std::int32_t otherError = static_cast<std::int32_t>(0x802400FF);
 constexpr std::uint8_t absentEndpoint = 0x70;
+constexpr std::int32_t timedOut = static_cast<std::int32_t>(0x80240007);
 
 void Require(bool condition, const char* message) {
     if (!condition) {
@@ -48,6 +49,74 @@ void APS5_VABI MarkDone(UsbdTransfer* transfer) {
 void APS5_VABI MarkDoneThenSignal(UsbdTransfer* transfer) {
     auto* notified = static_cast<std::atomic<bool>*>(transfer->userData);
     notified->store(true, std::memory_order_release);
+}
+
+void EventLocks() {
+    Require(sceUsbdEventHandlerActive() == 0 && sceUsbdEventHandlingOk() == 0, "an event handler was active before any lock");
+    sceUsbdLockEvents();
+    Require(sceUsbdEventHandlingOk() == 1 && sceUsbdEventHandlerActive() == 1, "the thread that locked events is not the handler");
+    Require(sceUsbdTryLockEvents() == 1, "the holder of the event lock took it again");
+    Require(Throws([] { sceUsbdLockEvents(); }), "one thread took the event lock twice");
+    Require(Throws([] { sceUsbdLockEventWaiters(); }), "the holder of the event lock took it again as a waiter");
+    std::thread([] {
+        Require(sceUsbdTryLockEvents() == 1, "the event lock was taken while another thread held it");
+        Require(sceUsbdEventHandlingOk() == 0 && sceUsbdEventHandlerActive() == 1, "a thread without the lock saw itself as the handler");
+    }).join();
+    sceUsbdUnlockEvents();
+    Require(sceUsbdEventHandlerActive() == 0 && sceUsbdEventHandlingOk() == 0, "the handler stayed active after unlocking events");
+    UsbdTimeval brief{0, 20000};
+    Require(Throws([] { sceUsbdUnlockEvents(); }) && Throws([] { sceUsbdUnlockEventWaiters(); }), "an event lock that was not held was released");
+    Require(Throws([&] { sceUsbdWaitForEvent(&brief); }) && Throws([&] { sceUsbdHandleEventsLocked(&brief); }), "waited or handled events without the event lock");
+    Require(sceUsbdTryLockEvents() == 0 && sceUsbdEventHandlingOk() == 1, "a free event lock was not taken");
+    UsbdTimeval negative{-1, 0};
+    Require(Throws([&] { sceUsbdHandleEventsLocked(&negative); }) && Throws([&] { sceUsbdWaitForEvent(&negative); }), "a negative timeout was accepted");
+    const auto start = std::chrono::steady_clock::now();
+    Require(sceUsbdHandleEventsLocked(&brief) == 0, "the handler failed to handle events");
+    Require(std::chrono::steady_clock::now() - start >= std::chrono::milliseconds(15), "the handler returned before the timeout");
+    sceUsbdUnlockEvents();
+
+    sceUsbdLockEventWaiters();
+    Require(sceUsbdEventHandlingOk() == 0, "locking the event waiters made this thread the handler");
+    Require(sceUsbdWaitForEvent(&brief) == 1, "waiting without a handler did not time out");
+    Require(sceUsbdEventHandlingOk() == 1, "a waiter did not take over handling after a timeout with no handler");
+    sceUsbdUnlockEvents();
+    Require(sceUsbdEventHandlerActive() == 0, "the waiter kept handling after unlocking events");
+
+    sceUsbdLockEvents();
+    std::atomic<bool> waiting{false};
+    std::atomic<int> woken{-1};
+    std::atomic<int> handling{-1};
+    std::thread waiter([&] {
+        sceUsbdLockEventWaiters();
+        UsbdTimeval patience{5, 0};
+        waiting.store(true);
+        woken.store(sceUsbdWaitForEvent(&patience));
+        handling.store(sceUsbdEventHandlingOk());
+        sceUsbdUnlockEvents();
+    });
+    while (!waiting.load()) Require(sceUsbdHandleEventsLocked(&brief) == 0, "the handler failed while a waiter queued");
+    sceUsbdUnlockEvents();
+    waiter.join();
+    Require(woken.load() == 0 && handling.load() == 1, "a waiter was not woken and handed the events when the handler unlocked");
+    Require(sceUsbdEventHandlerActive() == 0, "the handler stayed active after the woken waiter unlocked");
+
+    sceUsbdLockEvents();
+    std::atomic<bool> entered{false};
+    std::atomic<std::int32_t> waiterResult{0};
+    std::thread follower([&] {
+        sceUsbdLockEventWaiters();
+        entered.store(true);
+        UsbdTimeval shortWait{0, 30000};
+        waiterResult.store(sceUsbdHandleEventsLocked(&shortWait));
+        sceUsbdUnlockEventWaiters();
+    });
+    while (!entered.load()) Require(sceUsbdHandleEventsLocked(&brief) == 0, "the handler failed while another thread queued");
+    UsbdTimeval longer{0, 100000};
+    Require(sceUsbdHandleEventsLocked(&longer) == 0, "the handler failed while another thread waited");
+    follower.join();
+    Require(waiterResult.load() == timedOut, "a thread that is not the handler did not time out in sceUsbdHandleEventsLocked");
+    sceUsbdUnlockEvents();
+    Require(sceUsbdEventHandlerActive() == 0, "the handler stayed active at the end");
 }
 
 void Pump(const int& done) {
@@ -192,6 +261,20 @@ void Device() {
     Require(Throws([&] { sceUsbdFreeTransfer(reinterpret_cast<UsbdTransfer*>(transfer)); }), "an in-flight transfer was freed");
     Pump(done);
     Require(done == 1 && transfer->status == 0 && transfer->actualLength == 18, "asynchronous control transfer did not complete");
+    done = 0;
+    Require(sceUsbdSubmitTransfer(transfer) == 0, "resubmitting the control transfer failed");
+    while (done == 0) Require(sceUsbdHandleEvents() == 0, "sceUsbdHandleEvents failed while a transfer was in flight");
+    Require(transfer->status == 0 && transfer->actualLength == 18, "the control transfer did not complete through sceUsbdHandleEvents");
+    done = 0;
+    sceUsbdLockEvents();
+    Require(sceUsbdEventHandlingOk() == 1, "the thread that locked events cannot handle them");
+    Require(sceUsbdSubmitTransfer(transfer) == 0, "submitting the control transfer under the event lock failed");
+    {
+        UsbdTimeval slice{0, 100000};
+        for (int round = 0; round < 50 && done == 0; ++round) Require(sceUsbdHandleEventsLocked(&slice) == 0, "sceUsbdHandleEventsLocked failed while a transfer was in flight");
+    }
+    sceUsbdUnlockEvents();
+    Require(done == 1 && transfer->status == 0 && transfer->actualLength == 18, "the control transfer did not complete through sceUsbdHandleEventsLocked");
     Require(std::memcmp(setup + 8, descriptor, 18) == 0, "asynchronous device descriptor differs from the cached one");
     bool broken = false;
     {
@@ -286,6 +369,7 @@ int main(int argc, char** argv) {
     sceUsbdFreeDeviceList(list, 1);
 
     Require(Throws([&] { sceUsbdFreeDeviceList(list, 1); }), "a device list was freed twice");
+    EventLocks();
     Require(sceUsbdGetDeviceList(nullptr) == invalidArgument, "null list accepted");
     Require(sceUsbdHandleEventsTimeout(nullptr) == invalidArgument, "null timeout accepted");
     const UsbdTimeval invalid{0, 1000000};
@@ -376,7 +460,7 @@ int main(int argc, char** argv) {
     Require(sceUsbdOpenDeviceWithVidPid(0, 0) == nullptr, "a device with vendor and product 0 was opened");
     sceUsbdFreeTransfer(nullptr);
 
-    Require(sceUsbdEventHandlingOk() == 1, "event handling not allowed");
+    Require(sceUsbdEventHandlingOk() == 0, "a thread without the event lock may handle events");
     sceUsbdFreeConfigDescriptor(nullptr);
 
     Require(Throws([] { sceUsbdFillControlSetup(nullptr, 0x80, 6, 0x0100, 0, 18); }), "null control setup buffer accepted");
