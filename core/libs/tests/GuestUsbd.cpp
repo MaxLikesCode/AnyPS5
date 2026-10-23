@@ -51,6 +51,31 @@ void APS5_VABI MarkDoneThenSignal(UsbdTransfer* transfer) {
     notified->store(true, std::memory_order_release);
 }
 
+void FollowerTimesOut(bool holdPastTimeout) {
+    UsbdTimeval brief{0, 20000};
+    sceUsbdLockEvents();
+    std::atomic<bool> entered{false};
+    std::atomic<bool> finished{false};
+    std::atomic<std::int32_t> waiterResult{0};
+    std::thread follower([&] {
+        sceUsbdLockEventWaiters();
+        entered.store(true);
+        UsbdTimeval shortWait{0, 30000};
+        waiterResult.store(sceUsbdHandleEventsLocked(&shortWait));
+        sceUsbdUnlockEventWaiters();
+        finished.store(true);
+    });
+    while (!entered.load()) Require(sceUsbdHandleEventsLocked(&brief) == 0, "the handler failed while another thread queued");
+    if (holdPastTimeout) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!finished.load() && std::chrono::steady_clock::now() < deadline) Require(sceUsbdHandleEventsLocked(&brief) == 0, "the handler failed while another thread waited");
+    Require(finished.load(), "a thread that is not the handler did not return from sceUsbdHandleEventsLocked while the handler released the event lock");
+    follower.join();
+    Require(waiterResult.load() == timedOut, "a thread that is not the handler did not time out in sceUsbdHandleEventsLocked");
+    sceUsbdUnlockEvents();
+    Require(sceUsbdEventHandlerActive() == 0, "the handler stayed active at the end");
+}
+
 void EventLocks() {
     Require(sceUsbdEventHandlerActive() == 0 && sceUsbdEventHandlingOk() == 0, "an event handler was active before any lock");
     sceUsbdLockEvents();
@@ -100,23 +125,8 @@ void EventLocks() {
     Require(woken.load() == 0 && handling.load() == 1, "a waiter was not woken and handed the events when the handler unlocked");
     Require(sceUsbdEventHandlerActive() == 0, "the handler stayed active after the woken waiter unlocked");
 
-    sceUsbdLockEvents();
-    std::atomic<bool> entered{false};
-    std::atomic<std::int32_t> waiterResult{0};
-    std::thread follower([&] {
-        sceUsbdLockEventWaiters();
-        entered.store(true);
-        UsbdTimeval shortWait{0, 30000};
-        waiterResult.store(sceUsbdHandleEventsLocked(&shortWait));
-        sceUsbdUnlockEventWaiters();
-    });
-    while (!entered.load()) Require(sceUsbdHandleEventsLocked(&brief) == 0, "the handler failed while another thread queued");
-    UsbdTimeval longer{0, 100000};
-    Require(sceUsbdHandleEventsLocked(&longer) == 0, "the handler failed while another thread waited");
-    follower.join();
-    Require(waiterResult.load() == timedOut, "a thread that is not the handler did not time out in sceUsbdHandleEventsLocked");
-    sceUsbdUnlockEvents();
-    Require(sceUsbdEventHandlerActive() == 0, "the handler stayed active at the end");
+    FollowerTimesOut(false);
+    FollowerTimesOut(true);
 }
 
 void Pump(const int& done) {
