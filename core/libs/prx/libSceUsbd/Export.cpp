@@ -200,6 +200,7 @@ int HandleAsHandler(UsbdEvents& events, const UsbdTimeval* timeout) {
     }
     events.lock.lock();
     events.owner.store(self);
+    events.changed.notify_all();
     return result;
 }
 
